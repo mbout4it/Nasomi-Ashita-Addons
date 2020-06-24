@@ -1,0 +1,13 @@
+{
+    "fishersettings": {
+        "catch_monster": {
+            "enabled": false
+        },
+        "catch_unknown": {
+            "enabled": true
+        },
+		"catch_limit": {
+			"number": 0
+		}
+    }
+}
