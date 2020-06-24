@@ -1,6 +1,7 @@
 # Nasomi-Ashita-Addons
 
 Commands
+
 ######################################################################################
 start automated fishing with no catch limit, will stop at 20 minutes for fatigue
 /fisher start
