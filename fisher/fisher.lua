@@ -7,6 +7,8 @@ require 'common';
 require 'struct';
 require 'stringex';
 require 'mathex';
+require 'pack'
+local data = require 'data'
 
 -- Create a file name based on the current date and time..
 local date = os.date('*t');
@@ -17,6 +19,11 @@ if (not ashita.file.dir_exists(working_path)) then
 	ashita.file.create_dir(working_path);
 end
 local file = working_path .. name;
+local client_install = 'E:/Games/NasomiXI/SquareEnix/FINAL FANTASY XI';
+local base_message = string.char(
+    0xd9,0xef,0xf5,0xa0,0xe4,0xe9,0xe4,0xee,0xa7,0xf4,0xa0,0xe3,0xe1,0xf4,0xe3,
+    0xe8,0xa0,0xe1,0xee,0xf9,0xf4,0xe8,0xe9,0xee,0xe7,0xae,0xff,0xb1,0x80,0x87
+)
 local catch_limit = 0;
 local num_catches = 0;
 local cast_num = 0;
@@ -29,7 +36,9 @@ local fisher_running = false;
 local monster_on_line = false;
 local item_on_line = false;
 local cast_out = false;
+local last_status = 0;
 local fastmode = false;
+local message_id_offsets = {no_hook=0, small_fish=4, lost_catch=5, lost_skill=16, big_fish=46, item=47, hooked_monster=48}
 
 ----------------------------------------------------------------------------------------------------
 -- Configurations
@@ -57,6 +66,19 @@ local default_config =
 };
 
 local fisher_config = default_config;
+
+----------------------------------------------------------------------------------------------------
+-- func: read file
+-- desc: reads dat file
+----------------------------------------------------------------------------------------------------
+local function read_file(path)
+	local handle = io.open(path, 'rb')
+    if handle then
+        local contents = handle:read('*a')
+        handle:close()
+        return contents
+    end
+end
 
 ----------------------------------------------------------------------------------------------------
 -- func: log
@@ -127,20 +149,40 @@ local function is_inventory_full()
 end
 
 ---------------------------------------------------------------------------------------------------
+-- func: fishing stats
+-- desc: fishing stats
+---------------------------------------------------------------------------------------------------
+local function fish_stats()
+	local catchpct = 0.00;
+	local itempct = 0.00;
+	local monsterpct = 0.00;
+	local mindur = 0.00;
+	
+	if cast_num > 0 then
+		catchpct = (math.round((num_catches/cast_num),4) * 100.00);
+		itempct = (math.round((items_caught/cast_num),4) * 100.00);
+		monsterpct = (math.round((monsters_caught/cast_num),4) * 100.00);
+		mindur = math.round((fish_dur/60.00),2);
+	end
+	print(string.format('Casts: %s | Catches: %s | Catch rate %s%s | Item rate %s%s | Monster rate %s%s |  Duration(minutes): %s',
+		  cast_num,num_catches,catchpct,'%',itempct,'%',monsterpct,'%',mindur));
+end
+
+---------------------------------------------------------------------------------------------------
 -- func: stop_fishing
 -- desc: stop fishing variables set
 ---------------------------------------------------------------------------------------------------
 local function stop_fishing(reason)
+	print('Fishing stopped due to '..reason..'.');
+	fish_stats();
 	fisher_running = false;
 	num_catches = 0;
 	cast_num = 0;
 	items_caught = 0;
 	monsters_caught = 0;
 	monster_on_line = false;
-    cast_out = false;
 	item_on_line = false;
 	fastmode = false;
-	print('Fishing stopped due to '..reason..'.');
 end
 
 ---------------------------------------------------------------------------------------------------
@@ -161,18 +203,17 @@ end
 -- desc: will initiate cast if able to
 ---------------------------------------------------------------------------------------------------
 local function input_fish_command(recast)
-	if fisher_running then
 		fish_dur = os.clock() - fish_start_time;
 
 		if is_inventory_full() then
 			stop_fishing('full inventory');
-		elseif (fish_dur / 60.00) >= 20.00 then
+		elseif (fish_dur / 60.00) >= 15.00 then
 			ashita.misc.play_sound(string.format('%s\\sounds\\%s', _addon.path, 'fatigue.wav'));
 			stop_fishing('fatigue');
 		else
-			ashita.timer.once(recast,cast_line);
+			--ashita.timer.once(recast,cast_line);
+			cast_line();
 		end
-	end
 end
 
 local function catchFish(fish_id, catch_key)
@@ -191,19 +232,13 @@ local function catchFish(fish_id, catch_key)
 	elseif item_on_line then
 		items_caught = items_caught + 1;
 	end
+	
 	local newpacket = struct.pack("bbbbIIHBBI", 0x10, 0x0B, 0x00, 0x00, playerid, stamina, playerindex, action, 0, catch_key):totable();
 	num_catches = num_catches + 1;
 	monster_on_line = false;
 	item_on_line = false;
-    cast_out = false;
-	local catchpct = (math.round((num_catches/cast_num),4) * 100.00);
-	local itempct = (math.round((items_caught/cast_num),4) * 100.00);
-	local monsterpct = (math.round((monsters_caught/cast_num),4) * 100.00);
-	local mindur = math.round((fish_dur/60.00),2);
-	print('Casts: '..cast_num..' | Catches: '..num_catches..' | Catch rate '..catchpct..
-		  '% | Item rate '..itempct..'% | Monster rate '..monsterpct..'% |  Duration(minutes): '..mindur);
 	AddOutgoingPacket(0x110,newpacket);
-	input_fish_command(7.0);
+	--input_fish_command(10.0);
 end
 
 ----------------------------------------------------------------------------------------------------
@@ -234,10 +269,12 @@ ashita.register_event('command', function(command, ntype)
 		fish_start_time = os.clock();
 		fisher_running = true;
 		cast_line();
-    end
     -- Stop fishing
-    if (#args > 1 and args[2] == 'stop') then
+    elseif (#args > 1 and args[2] == 'stop') then
 		stop_fishing('stop command request')
+	-- Stop fishing
+    elseif (#args > 1 and args[2] == 'stats') then
+		fish_stats();
     end
 	
     return true;
@@ -299,15 +336,15 @@ end);
 ---------------------------------------------------------------------------------------------------
 ashita.register_event('incoming_text', function(mode, chat)
 	-- track if monster on line
-	if chat:lower():contains('something clamps onto your line ferociously!') and cast_out then
-		monster_on_line = true;
+	--if chat:lower():contains('something clamps onto your line ferociously!') and cast_out then
+	--	monster_on_line = true;
 	-- track if item on line
-	elseif chat:lower():contains('you feel something pulling at your line.') and cast_out then
-		item_on_line = true;
+	--elseif chat:lower():contains('you feel something pulling at your line.') and cast_out then
+	--	item_on_line = true;
 	-- no bite schedule a new cast
-	elseif chat:lower():contains('you didn\'t catch anything.') then
-		input_fish_command(6.0);
-	end
+	--elseif chat:lower():contains('you didn\'t catch anything.') then
+	--	input_fish_command(6.0);
+	--end
     return false;
 end );
 
@@ -342,6 +379,62 @@ ashita.register_event('incoming_packet', function(id, size, packet, packet_modif
 				ashita.timer.once(catchDelay,catchFish,stamina,catchId);
 			end
 		end
+	elseif id == 0x036 then
+		local actor = struct.unpack('I',packet,0x04+1);
+		local actorid = struct.unpack('H',packet,0x08+1);
+		local BEmessageid = ashita.bits.unpack_be(packet,0x0A,0,15);
+		local zoneId = AshitaCore:GetDataManager():GetParty():GetMemberZone(0);
+		local messageDat = data.message_dat_by_zone[zoneId];
+		local datPath = string.format('%s/%s',client_install,messageDat);
+		local message_dat_file = read_file(datPath)
+		if message_dat_file then
+			local offset = string.find(message_dat_file, base_message)
+			offset = pack.pack('i', bit.bxor(offset - 5, 0x80808080))
+			offset = string.gsub(offset, '([%^%$%(%)%%%.%[%]%*%+%-%?])', '%%%1')
+			local index = string.find(message_dat_file, offset)
+			local dat_message_id = (index - 5) / 4
+			if (dat_message_id + message_id_offsets['no_hook']) == BEmessageid then
+				--input_fish_command(10.0);
+			elseif (dat_message_id + message_id_offsets['hooked_monster']) == BEmessageid then
+				monster_on_line = true;
+			elseif (dat_message_id + message_id_offsets['item']) == BEmessageid then
+				item_on_line = true;
+			elseif (dat_message_id + message_id_offsets['big_fish']) == BEmessageid then
+			
+			elseif (dat_message_id + message_id_offsets['lost_catch']) == BEmessageid then
+			
+			elseif (dat_message_id + message_id_offsets['small_fish']) == BEmessageid then
+
+			end
+		end
 	end
 	return false;
+end);
+
+ashita.register_event('render', function()
+	local player = GetPlayerEntity();
+	if player == nil then
+	else
+		if (last_status == 38 or last_status == 39 or last_status == 40 or last_status == 41 or last_status == 42 or last_status == 43 or 
+			last_status == 50 or last_status == 51 or last_status == 52 or last_status == 53 or last_status == 54 or last_status == 55 or
+			last_status == 56 or last_status == 57 or last_status == 58 or last_status == 59 or last_status == 60 or last_status == 61 or
+			last_status == 62) and player.Status == 0 then
+			cast_out = false;
+			local pointer = ashita.memory.findpattern('FFXiMain.dll', 0, '81EC000100003BC174218B0D', 0, 0);
+			if (pointer == 0) then
+			else
+				-- Read into the pointer..
+				local addr = ashita.memory.read_uint32(pointer + 0x0C);
+				addr = ashita.memory.read_uint32(addr);
+				-- Set the new FPS divisor..
+				ashita.memory.write_uint32(addr + 0x30, 1);
+			end
+		end
+		if last_status ~= player.Status then
+			last_status = player.Status
+		end
+		if player.Status == 0 and fisher_running and cast_out == false then
+			input_fish_command(0);
+		end
+	end
 end);
