@@ -21,3 +21,9 @@ stop automated fishing - addon will finish current cast and not recast
  /fisher stop
  
 ######################################################################################
+
+display current sessions fishing stats
+
+ /fisher stats
+ 
+######################################################################################
