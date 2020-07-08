@@ -30,6 +30,7 @@ local cast_num = 0;
 local items_caught = 0;
 local monsters_caught = 0;
 local fish_dur = 0.00;
+local fatigue_time = 20.00;
 local catch_monster = false;
 local catch_unknown = true;
 local fisher_running = false;
@@ -38,7 +39,8 @@ local item_on_line = false;
 local cast_out = false;
 local last_status = 0;
 local fastmode = false;
-local message_id_offsets = {no_hook=0, small_fish=4, lost_catch=5, lost_skill=16, big_fish=46, item=47, hooked_monster=48}
+local biteid = 0;
+local message_id_offsets = {no_hook=0, small_fish=4, lost_catch=5, lost_skill=16, still_on=36, big_fish=46, item=47, hooked_monster=48}
 
 ----------------------------------------------------------------------------------------------------
 -- Configurations
@@ -180,6 +182,7 @@ local function stop_fishing(reason)
 	cast_num = 0;
 	items_caught = 0;
 	monsters_caught = 0;
+	biteid = 0;
 	monster_on_line = false;
 	item_on_line = false;
 	fastmode = false;
@@ -194,6 +197,8 @@ local function cast_line()
 		--AshitaCore:GetChatManager():QueueCommand('/fps 1', CommandInputType.Typed);
 		AshitaCore:GetChatManager():QueueCommand('/fish', CommandInputType.Typed);
 		cast_num = cast_num + 1;
+		monster_on_line = false;
+		item_on_line = false;
 		cast_out = true;
 	end
 end
@@ -207,7 +212,7 @@ local function input_fish_command(recast)
 
 		if is_inventory_full() then
 			stop_fishing('full inventory');
-		elseif (fish_dur / 60.00) >= 15.00 then
+		elseif (fish_dur / 60.00) >= fatigue_time then
 			ashita.misc.play_sound(string.format('%s\\sounds\\%s', _addon.path, 'fatigue.wav'));
 			stop_fishing('fatigue');
 		else
@@ -216,7 +221,7 @@ local function input_fish_command(recast)
 		end
 end
 
-local function catchFish(fish_id, catch_key)
+local function catchFish(catch_key)
 	fish_dur = os.clock() - fish_start_time;
 	local playerindex = GetPlayerEntity().TargetIndex;
 	local playerid = AshitaCore:GetDataManager():GetParty():GetMemberServerId(0);
@@ -235,8 +240,6 @@ local function catchFish(fish_id, catch_key)
 	
 	local newpacket = struct.pack("bbbbIIHBBI", 0x10, 0x0B, 0x00, 0x00, playerid, stamina, playerindex, action, 0, catch_key):totable();
 	num_catches = num_catches + 1;
-	monster_on_line = false;
-	item_on_line = false;
 	AddOutgoingPacket(0x110,newpacket);
 	--input_fish_command(10.0);
 end
@@ -254,13 +257,16 @@ ashita.register_event('command', function(command, ntype)
     
     -- Start fishing, a 3rd argument can be provided for catch limit
     if (#args > 1 and args[2] == 'start') then
+		fatigue_time = 20.00;
         if #args > 2 then 
 			if args[3] == 'fast' then
 				fastmode = true;
+				fatigue_time = 15.00;
 			else
 				catch_limit = tonumber(args[3])
 			end
 		end
+		biteid =0;
 		if catch_limit > 0 then
 			print('Fishing started with catch limit of '..catch_limit..'.');
 		else
@@ -303,9 +309,9 @@ ashita.register_event('load', function()
 		-- set up monster catching flag
 		catch_monster = fisher_config['fishersettings']['catch_monster'].enabled;
 		if catch_monster then
-			print('Monster catching is enabled.');
+			--print('Monster catching is enabled.');
 		else
-			print('Monster catching is disabled.');
+			--print('Monster catching is disabled.');
 		end
 	end
 	
@@ -313,9 +319,9 @@ ashita.register_event('load', function()
 		-- set up monster catching flag
 		catch_unknown = fisher_config['fishersettings']['catch_unknown'].enabled;
 		if catch_unknown then
-			print('Unknown catching is enabled.');
+			--print('Unknown catching is enabled.');
 		else
-			print('Unknown catching is disabled.');
+			--print('Unknown catching is disabled.');
 		end
 	end
 	
@@ -323,9 +329,9 @@ ashita.register_event('load', function()
 		-- set up default catch limit
 		catch_limit = fisher_config['fishersettings']['catch_limit'].number;
 		if catch_limit > 0 then
-			print('Fishing catch limit is set to '..catch_limit..'.');
+			--print('Fishing catch limit is set to '..catch_limit..'.');
 		else
-			print('No fishing catch limit.');
+			--print('No fishing catch limit.');
 		end
 	end
 end);
@@ -368,15 +374,16 @@ ashita.register_event('incoming_packet', function(id, size, packet, packet_modif
 		local sense = struct.unpack('B',packet,0x12+1);
 		local catchId = struct.unpack('I',packet,0x14+1);
 		local catchDelay = (math.random(400,600)/100);
+		biteid = catchId;
 		if monster_on_line then
 			--print('Releasing monster.');
-			catchFish(stamina,catchId)
+			catchFish(catchId)
 		else
 			if fastmode then
-				catchFish(stamina,catchId)
+				catchFish(catchId)
 			else
-				print('Catching fish in '..catchDelay..' seconds.');
-				ashita.timer.once(catchDelay,catchFish,stamina,catchId);
+				--print('Catching fish in '..catchDelay..' seconds.');
+				ashita.timer.once(catchDelay,catchFish,catchId);
 			end
 		end
 	elseif id == 0x036 then
@@ -399,6 +406,8 @@ ashita.register_event('incoming_packet', function(id, size, packet, packet_modif
 				monster_on_line = true;
 			elseif (dat_message_id + message_id_offsets['item']) == BEmessageid then
 				item_on_line = true;
+			elseif (dat_message_id + message_id_offsets['still_on']) == BEmessageid then
+				catchFish(biteid)
 			elseif (dat_message_id + message_id_offsets['big_fish']) == BEmessageid then
 			
 			elseif (dat_message_id + message_id_offsets['lost_catch']) == BEmessageid then
