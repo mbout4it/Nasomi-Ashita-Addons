@@ -4,7 +4,15 @@ Commands
 
 ######################################################################################
 
+start automated fishing with no catch limit, will stop at 15 minutes for fatigue
+this mode will catch fish instantly when a fish bites
+
+/fisher start fast
+
+######################################################################################
+
 start automated fishing with no catch limit, will stop at 20 minutes for fatigue
+this mode will catch fish 4-6 seconds after a fish bites
 
 /fisher start
 
