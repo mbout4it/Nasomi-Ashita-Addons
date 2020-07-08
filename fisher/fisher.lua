@@ -342,7 +342,7 @@ end);
 ---------------------------------------------------------------------------------------------------
 ashita.register_event('incoming_text', function(mode, chat)
 	-- packet wasn't interpreted for some reason
-	if chat:lower():contains('You don\'t know how much longer you can keep this one on the line') and cast_out then
+	if chat:lower():contains('you don\'t know how much longer you can keep this one on the line') and cast_out then
 		catchFish(biteid)
 	end
 	-- track if monster on line
