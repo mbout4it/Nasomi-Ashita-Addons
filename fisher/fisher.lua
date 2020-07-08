@@ -1,6 +1,6 @@
 _addon.name = 'fisher';
 _addon.author = 'scoobwrecks';
-_addon.version = '0.0.0.1';
+_addon.version = '1.0.0.0';
 _addon.command = 'fisher';
 
 require 'common';
