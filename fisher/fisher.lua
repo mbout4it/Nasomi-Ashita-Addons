@@ -13,13 +13,14 @@ local data = require 'data'
 -- Create a file name based on the current date and time..
 local date = os.date('*t');
 local fish_start_time = os.clock();
+local last_catch = nil;
 local name = string.format('packets_%d.%d.%d-%d_%d_%d.txt', date['month'], date['day'], date['year'], date['hour'], date['min'], date['sec']);
 local working_path = string.format('%s/%s/%s/%s/', AshitaCore:GetAshitaInstallPath(), 'addons', 'fisher','logs');
 if (not ashita.file.dir_exists(working_path)) then
 	ashita.file.create_dir(working_path);
 end
 local file = working_path .. name;
-local client_install = 'E:/Games/NasomiXI/SquareEnix/FINAL FANTASY XI';
+local client_install = 'E:/Games/FFXI Private Server/SquareEnix/FINAL FANTASY XI';
 local base_message = string.char(
     0xd9,0xef,0xf5,0xa0,0xe4,0xe9,0xe4,0xee,0xa7,0xf4,0xa0,0xe3,0xe1,0xf4,0xe3,
     0xe8,0xa0,0xe1,0xee,0xf9,0xf4,0xe8,0xe9,0xee,0xe7,0xae,0xff,0xb1,0x80,0x87
@@ -30,7 +31,7 @@ local cast_num = 0;
 local items_caught = 0;
 local monsters_caught = 0;
 local fish_dur = 0.00;
-local fatigue_time = 20.00;
+local fatigue_time = 15.00;
 local catch_monster = false;
 local catch_unknown = true;
 local fisher_running = false;
@@ -40,7 +41,8 @@ local cast_out = false;
 local last_status = 0;
 local fastmode = false;
 local biteid = 0;
-local message_id_offsets = {no_hook=0, small_fish=4, lost_catch=5, lost_skill=16, still_on=36, big_fish=46, item=47, hooked_monster=48}
+local nasomi_message_id_offsets = {no_hook=0, small_fish=4, lost_catch=5, lost_skill=16, still_on=36, big_fish=46, item=47, hooked_monster=48}
+local retail_message_id_offsets = {no_hook=-3, small_fish=1, lost_catch=2, lost_skill=13, still_on=33, big_fish=43, item=44, hooked_monster=45}
 
 ----------------------------------------------------------------------------------------------------
 -- Configurations
@@ -211,6 +213,7 @@ local function input_fish_command(recast)
 		fish_dur = os.clock() - fish_start_time;
 
 		if is_inventory_full() then
+			ashita.misc.play_sound(string.format('%s\\sounds\\%s', _addon.path, 'full_load.wav'));
 			stop_fishing('full inventory');
 		elseif (fish_dur / 60.00) >= fatigue_time then
 			ashita.misc.play_sound(string.format('%s\\sounds\\%s', _addon.path, 'fatigue.wav'));
@@ -240,6 +243,8 @@ local function catchFish(catch_key)
 	
 	local newpacket = struct.pack("bbbbIIHBBI", 0x10, 0x0B, 0x00, 0x00, playerid, stamina, playerindex, action, 0, catch_key):totable();
 	num_catches = num_catches + 1;
+	last_catch = os.clock();
+	--log('Sent catch packaet with stamina = %s for biteid = %s\n\n',stamina,catch_key);
 	AddOutgoingPacket(0x110,newpacket);
 	--input_fish_command(10.0);
 end
@@ -257,11 +262,9 @@ ashita.register_event('command', function(command, ntype)
     
     -- Start fishing, a 3rd argument can be provided for catch limit
     if (#args > 1 and args[2] == 'start') then
-		fatigue_time = 20.00;
         if #args > 2 then 
 			if args[3] == 'fast' then
 				fastmode = true;
-				fatigue_time = 15.00;
 			else
 				catch_limit = tonumber(args[3])
 			end
@@ -379,15 +382,16 @@ ashita.register_event('incoming_packet', function(id, size, packet, packet_modif
 		local catchId = struct.unpack('I',packet,0x14+1);
 		local catchDelay = (math.random(400,600)/100);
 		biteid = catchId;
+		--log('Stamina = %s CatchID = %s\n',stamina,catchId);
 		if monster_on_line then
 			--print('Releasing monster.');
-			catchFish(catchId)
+			catchFish(biteid)
 		else
 			if fastmode then
-				catchFish(catchId)
+				catchFish(biteid)
 			else
 				--print('Catching fish in '..catchDelay..' seconds.');
-				ashita.timer.once(catchDelay,catchFish,catchId);
+				ashita.timer.once(catchDelay,catchFish,biteid);
 			end
 		end
 	elseif id == 0x036 then
@@ -397,27 +401,46 @@ ashita.register_event('incoming_packet', function(id, size, packet, packet_modif
 		local zoneId = AshitaCore:GetDataManager():GetParty():GetMemberZone(0);
 		local messageDat = data.message_dat_by_zone[zoneId];
 		local datPath = string.format('%s/%s',client_install,messageDat);
-		local message_dat_file = read_file(datPath)
+		local message_dat_file = read_file(datPath);
 		if message_dat_file then
-			local offset = string.find(message_dat_file, base_message)
-			offset = pack.pack('i', bit.bxor(offset - 5, 0x80808080))
-			offset = string.gsub(offset, '([%^%$%(%)%%%.%[%]%*%+%-%?])', '%%%1')
-			local index = string.find(message_dat_file, offset)
-			local dat_message_id = (index - 5) / 4
-			if (dat_message_id + message_id_offsets['no_hook']) == BEmessageid then
+			local offset = string.find(message_dat_file, base_message);
+			offset = pack.pack('i', bit.bxor(offset - 5, 0x80808080));
+			offset = string.gsub(offset, '([%^%$%(%)%%%.%[%]%*%+%-%?])', '%%%1');
+			local index = string.find(message_dat_file, offset);
+			local dat_message_id = (index - 5) / 4;
+			--print(BEmessageid);
+			if (dat_message_id + nasomi_message_id_offsets['no_hook']) == BEmessageid or
+			   (dat_message_id + retail_message_id_offsets['no_hook']) == BEmessageid then
 				--input_fish_command(10.0);
-			elseif (dat_message_id + message_id_offsets['hooked_monster']) == BEmessageid then
+				--print('Matched to no fish caught')
+			elseif (dat_message_id + nasomi_message_id_offsets['hooked_monster']) == BEmessageid or
+				   (dat_message_id + retail_message_id_offsets['hooked_monster']) == BEmessageid then
 				monster_on_line = true;
-			elseif (dat_message_id + message_id_offsets['item']) == BEmessageid then
+				--print('Matched to monster on line')
+				--log('%s\n','~~~~~~~~~~~Hooked monster~~~~~~~~~~~');
+			elseif (dat_message_id + nasomi_message_id_offsets['item']) == BEmessageid or
+				   (dat_message_id + retail_message_id_offsets['item']) == BEmessageid then
 				item_on_line = true;
-			elseif (dat_message_id + message_id_offsets['still_on']) == BEmessageid then
+				--print('Matched to item on line')
+				--log('%s\n','~~~~~~~~~~~Hooked item~~~~~~~~~~~');
+			elseif (dat_message_id + nasomi_message_id_offsets['still_on']) == BEmessageid or
+				   (dat_message_id + retail_message_id_offsets['still_on']) == BEmessageid then
+				--log('%s\n','~~~~~~~~~~~Still on the line~~~~~~~~~~~');
+				--print('Matched to fish is still on line')
 				catchFish(biteid)
-			elseif (dat_message_id + message_id_offsets['big_fish']) == BEmessageid then
-			
-			elseif (dat_message_id + message_id_offsets['lost_catch']) == BEmessageid then
-			
-			elseif (dat_message_id + message_id_offsets['small_fish']) == BEmessageid then
-
+			elseif (dat_message_id + nasomi_message_id_offsets['big_fish']) == BEmessageid or
+				   (dat_message_id + retail_message_id_offsets['big_fish']) == BEmessageid then
+				--print('Matched to big fish on line')
+				--log('%s\n','~~~~~~~~~~~Hooked big_fish~~~~~~~~~~~');
+			elseif (dat_message_id + nasomi_message_id_offsets['lost_catch']) == BEmessageid or
+				   (dat_message_id + retail_message_id_offsets['lost_catch']) == BEmessageid then
+				--print('Matched to lost catch on line')				
+			elseif (dat_message_id + nasomi_message_id_offsets['small_fish']) == BEmessageid or
+				   (dat_message_id + retail_message_id_offsets['small_fish']) == BEmessageid then
+				--print('Matched to small fish on line')
+			else
+				print(string.format('No match for dialogue id %s read in chat packet 0x036',BEmessageid))
+				--log('%s\n','~~~~~~~~~~~Hooked small fish~~~~~~~~~~~');
 			end
 		end
 	end
